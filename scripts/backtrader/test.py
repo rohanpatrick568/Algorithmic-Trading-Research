@@ -99,7 +99,7 @@ def make_synthetic_ohlcv(rows=250, start_price=100.0, seed=42):
 
 
 def main():
-    symbol = "AAPL"
+    symbol = "BTC"
     start = "2020-01-01"
     end = None  # use today's date by default
 
