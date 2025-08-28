@@ -281,7 +281,8 @@ class FlawlessVictory(bt.Strategy):
         # Risk scaling & gates
         scale, risk_ok, rmeta = self._risk_scale_and_gate()
         if self.p.risk_verbose:
-            self.log(f"RISK vol={rmeta.get('vol')} dd={rmeta.get('dd')} scale={scale:.2f} gates={{{k: rmeta[k] for k in rmeta if k not in ('vol','dd')}}}")
+            gates = {k: v for k, v in rmeta.items() if k not in ('vol', 'dd')}
+            self.log(f"RISK vol={rmeta.get('vol')} dd={rmeta.get('dd')} scale={scale:.2f} gates={gates}")
 
         # No pyramiding: only if flat and no pending orders
         if not in_pos and not have_open and risk_ok:
