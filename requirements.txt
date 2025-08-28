@@ -1,0 +1,23 @@
+# Core libraries
+numpy
+pandas
+requests
+
+# Deep learning / RL
+torch
+stable-baselines3
+gymnasium
+
+# Trading libraries
+backtrader
+lumibot
+yfinance
+
+# LM Studio client (if install fails, see note below)
+lmstudio
+
+# Notes:
+# - 'datetime' is part of the Python standard library and should not be installed via pip.
+#   Including it here could accidentally pull a different package (e.g., 'DateTime').
+# - If 'lmstudio' is not available in PyPI for your environment, consider using the
+#   'openai' package against LM Studio's local OpenAI-compatible server or use 'requests'.
