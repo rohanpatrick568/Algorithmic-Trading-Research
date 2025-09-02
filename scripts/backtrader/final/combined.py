@@ -501,7 +501,7 @@ class TrainConfig:
     start: Optional[str] = '2015-01-01'
     end: Optional[str] = '2022-12-31'
     window: int = 32
-    episodes: int = 1
+    episodes: int = 100
     max_steps: Optional[int] = 500
     gamma: float = 0.99
     lr: float = 1e-3
