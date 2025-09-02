@@ -1,3 +1,6 @@
 # Ignore local virtual environment directory
 env/
 venv/
+*.html
+*.log
+*.csv
