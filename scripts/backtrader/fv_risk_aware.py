@@ -54,25 +54,25 @@ class RealizedVolatility(bt.Indicator):
     lines = ('vol',)
     params = dict(period=30, annualize=False)
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         ret = (self.data.close / self.data.close(-1)) - 1.0
         std = bt.ind.StdDev(ret, period=self.p.period)
         self.l.vol = std * (252.0 ** 0.5 if self.p.annualize else 1.0)
-
 
 class DownsideDeviation(bt.Indicator):
     """Sortino-style downside deviation around target return (default 0)."""
     lines = ('dd',)
     params = dict(period=30, target=0.0)
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         ret = (self.data.close / self.data.close(-1)) - 1.0
         downside = bt.If(ret < self.p.target, (ret - self.p.target) * (ret - self.p.target), 0.0)
         mean_down = bt.ind.SMA(downside, period=self.p.period)
         self.l.dd = mean_down ** 0.5
+        self.l.dd = mean_down ** 0.5
 
-
-# ---------- Custom Indicators ----------
 class MoneyFlowIndex(bt.Indicator):
     """Money Flow Index (MFI) without TA-Lib.
 
@@ -87,7 +87,8 @@ class MoneyFlowIndex(bt.Indicator):
     lines = ('mfi',)
     params = dict(period=14)
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         tp = (self.data.high + self.data.low + self.data.close) / 3.0
         mf = tp * self.data.volume
         upmf = bt.If(tp > tp(-1), mf, 0.0)
@@ -97,6 +98,8 @@ class MoneyFlowIndex(bt.Indicator):
 
         # Avoid division by zero with a tiny epsilon
         ratio = pos / (neg + 1e-9)
+        mfi = 100.0 - (100.0 / (1.0 + ratio))
+        self.lines.mfi = mfi
         mfi = 100.0 - (100.0 / (1.0 + ratio))
         self.lines.mfi = mfi
 

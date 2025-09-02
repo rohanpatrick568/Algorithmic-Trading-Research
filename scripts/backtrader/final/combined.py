@@ -207,19 +207,22 @@ if bt is not None:
 
         def _risk_scale_and_gate(self):
             if not self.p.risk_enabled:
-                return 1.0, True
+                return 1.0, True, {}
             eq = self.broker.getvalue()
             if self.equity_peak is None:
                 self.equity_peak = eq
             self.equity_peak = max(self.equity_peak, eq)
             dd = (eq / self.equity_peak) - 1.0
             gated = False
+            reasons = {}
             if dd < -self.p.risk_max_drawdown:
                 self.dd_cooldown = self.p.risk_dd_cooldown_bars
                 gated = True
+                reasons["drawdown"] = round(dd, 4)
             if self.dd_cooldown > 0:
                 self.dd_cooldown -= 1
                 gated = True
+                reasons["cooldown"] = self.dd_cooldown
             v = float(self.vol.vol[0])
             if math.isnan(v) or v <= 0:
                 scale = 1.0
@@ -229,7 +232,13 @@ if bt is not None:
             ddv = float(self.ddown.dd[0])
             if not math.isnan(ddv) and ddv > self.p.risk_max_downside_dev:
                 gated = True
-            return scale, (not gated)
+                reasons["downside_dev"] = round(ddv, 4)
+            rmeta = {
+                "vol": round(v if not math.isnan(v) else 0.0, 6),
+                "dd": round(dd, 4),
+                **reasons,
+            }
+            return scale, (not gated), rmeta
 
         def next(self):
             c = self.data.close[0]
@@ -246,7 +255,11 @@ if bt is not None:
             v3_buy = (c < self.bb1.bot[0]) and (self.mfi[0] < self.p.v3_mfi_lower)
             v3_sell = (c > self.bb1.top[0]) and (self.rsi[0] > self.p.v3_rsi_upper) and (self.mfi[0] > self.p.v3_mfi_upper)
 
-            scale, risk_ok = self._risk_scale_and_gate()
+            scale, risk_ok, rmeta = self._risk_scale_and_gate()
+
+            if self.p.risk_verbose:
+                gates = {k: v for k, v in rmeta.items() if k not in ("vol", "dd")}
+                self.log(f"RISK vol={rmeta.get('vol')} dd={rmeta.get('dd')} scale={scale:.2f} gates={gates}")
 
             if not in_pos and not have_open and risk_ok:
                 stake = max(1, int((self.broker.getcash() * self.p.cash_fraction * scale) / c))
@@ -265,6 +278,9 @@ if bt is not None:
                     orders = self.buy_bracket(size=stake, limitprice=tp, stopprice=sl)
                     self.parent_order, self.stop_order, self.limit_order = orders
                     self.log(f"BUY v3 size={stake} @ {c:.2f} SL={sl:.2f} TP={tp:.2f}")
+
+            elif not in_pos and not have_open and (not risk_ok) and self.p.risk_verbose:
+                self.log(f"ENTRY GATED by risk: {rmeta}")
 
             if in_pos:
                 do_close = (
@@ -299,7 +315,7 @@ def run_backtest(cfg: BacktestConfig):
         return
     data = bt.feeds.PandasData(dataname=df)
     cerebro = bt.Cerebro()
-    cerebro.addstrategy(FlawlessVictory, version=cfg.version, cash_fraction=cfg.cash_fraction)
+    cerebro.addstrategy(FlawlessVictory, version=cfg.version, cash_fraction=cfg.cash_fraction, risk_verbose=True)
     cerebro.adddata(data)
     cerebro.broker.setcash(cfg.cash)
     cerebro.broker.setcommission(commission=cfg.commission)
@@ -587,13 +603,13 @@ def train_bdq(cfg: TrainConfig):
                 nn.utils.clip_grad_norm_(online.parameters(), max_norm=1.0)
                 opt.step()
 
-                if global_step % 1000 == 0:
+                if global_step % 100 == 0:
                     print(f"step {global_step} loss {loss.item():.6f} td {td_loss.item():.6f} aux {aux_loss.item():.6f} eps {eps:.3f} ep_reward {ep_reward:.4f}")
 
             if global_step % cfg.target_sync == 0:
                 target.load_state_dict(online.state_dict())
 
-        print(f"episode {ep+1} steps {steps} reward {ep_reward:.4f}")
+    print(f"episode {ep+1} steps {steps} reward {ep_reward:.4f}")
 
     # Save checkpoint
     if cfg.save_path:
@@ -605,7 +621,7 @@ def train_bdq(cfg: TrainConfig):
 # ============================== CLI ==============================
 def main():
     p = argparse.ArgumentParser(description="Combined Backtrader risk-aware FV and Gymnasium BDQ (DeepScalper-style)")
-    p.add_argument('--mode', choices=['backtest', 'train'], default='backtest')
+    p.add_argument('--mode', choices=['backtest', 'train'], default=None)
     # Backtest args
     p.add_argument('--symbol', default='AAPL')
     p.add_argument('--start', default='2020-01-01')
@@ -622,27 +638,65 @@ def main():
     p.add_argument('--load-path', default=None)
     args = p.parse_args()
 
-    if args.mode == 'backtest':
+    # Simple helper to prompt with defaults
+    def _ask(prompt: str, default: Optional[str] = None) -> str:
+        suffix = f" [{default}]" if default is not None else ""
+        val = input(f"{prompt}{suffix}: ").strip()
+        return default if (val == "" and default is not None) else val
+
+    # If mode not provided, prompt for it interactively
+    mode = args.mode
+    if mode is None:
+        mode = _ask("Select mode (train/backtest)", "train").lower()
+        if mode not in ("train", "backtest"):
+            print("Invalid mode. Use 'train' or 'backtest'.")
+            return
+
+    if mode == 'backtest':
+        # Fill from args or prompt
+        symbol = args.symbol or _ask("Symbol", "AAPL")
+        start = args.start or _ask("Start (YYYY-MM-DD)", "2020-01-01")
+        end = args.end if args.end is not None else _ask("End (YYYY-MM-DD or blank)", "") or None
+        version = args.version or _ask("Version (v1/v2/v3)", "v1")
+        try:
+            cash = float(args.cash) if args.cash is not None else float(_ask("Cash", "100000"))
+        except Exception:
+            cash = 100000.0
+        try:
+            commission = float(args.commission) if args.commission is not None else float(_ask("Commission", "0.001"))
+        except Exception:
+            commission = 0.001
+        try:
+            cash_fraction = float(args['cash_fraction']) if isinstance(args, dict) and 'cash_fraction' in args else float(_ask("Cash fraction (0..1)", "1.0"))
+        except Exception:
+            cash_fraction = 1.0
         cfg = BacktestConfig(
-            symbol=args.symbol,
-            start=args.start,
-            end=args.end,
-            cash=args.cash,
-            commission=args.commission,
-            version=args.version,
-            cash_fraction=args.cash_fraction,
+            symbol=symbol,
+            start=start,
+            end=end,
+            cash=cash,
+            commission=commission,
+            version=version,
+            cash_fraction=cash_fraction,
         )
         run_backtest(cfg)
     else:
+        # Training: prompt for key params if not provided
+        symbol = args.symbol or _ask("Symbol", "AAPL")
+        window = args.window or int(_ask("Window (state size)", "32"))
+        episodes = args.episodes or int(_ask("Episodes", "1"))
+        max_steps = args.max_steps if args.max_steps is not None else int(_ask("Max steps per episode (0=all)", "500"))
+        save_path = args.save_path or _ask("Save path", os.path.join('models', 'bdq.pt'))
+        load_path = args.load_path or _ask("Load path (leave blank if none)", "") or None
         tcfg = TrainConfig(
-            symbol=args.symbol,
+            symbol=symbol,
             start='2015-01-01',
             end='2022-12-31',
-            window=args.window,
-            episodes=args.episodes,
-            max_steps=(None if args.max_steps == 0 else args.max_steps),
-            save_path=args.save_path,
-            load_path=args.load_path,
+            window=window,
+            episodes=episodes,
+            max_steps=(None if max_steps == 0 else max_steps),
+            save_path=save_path,
+            load_path=load_path,
         )
         train_bdq(tcfg)
 
