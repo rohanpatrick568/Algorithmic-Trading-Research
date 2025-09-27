@@ -91,6 +91,16 @@ def train_agent(env: DeepScalperEnv, tcfg: TrainConfig, ckpt_dir: str = "", *, r
     opt = optim.Adam(online.parameters(), lr=tcfg.lr)
 
     buffer = PrioritizedReplay(tcfg.buffer_size)
+    
+    # Initialize performance monitoring
+    try:
+        from .monitoring import PerformanceMonitor
+    except Exception:
+        from monitoring import PerformanceMonitor
+    
+    log_dir = os.path.join(ckpt_dir, "logs") if ckpt_dir else "logs"
+    monitor = PerformanceMonitor(log_dir)
+    monitor.load_history()  # Load existing history if available
 
     obs, _ = env.reset()
     # Resume if requested
@@ -103,6 +113,7 @@ def train_agent(env: DeepScalperEnv, tcfg: TrainConfig, ckpt_dir: str = "", *, r
             print(f"[DeepScalper] Resumed from step {step} in {ckpt_dir}")
     target_total = step + tcfg.train_steps
     episode_return = 0.0
+    episode_count = 0
     best_eval = -1e9
 
     while step < target_total:
@@ -129,7 +140,22 @@ def train_agent(env: DeepScalperEnv, tcfg: TrainConfig, ckpt_dir: str = "", *, r
         step += 1
 
         if done or trunc:
-            print(f"Episode finished: step={step} return={episode_return:,.2f} cash={info.get('cash'):,.2f}")
+            episode_count += 1
+            
+            # Prepare episode info for monitoring
+            env_info = {
+                'total_return': episode_return,
+                'cash': env.cash,
+                'equity': env.cash + env.pos * info.get('price', 0),
+                'trades': [],  # Could be enhanced to track individual trades
+                'returns': [],  # Could be enhanced to track period returns
+                'positions': []  # Could be enhanced to track position history
+            }
+            
+            # Log episode performance
+            metrics = monitor.log_episode(step, episode_count, env_info)
+            
+            print(f"Episode {episode_count} finished: step={step} return={episode_return:,.2f} cash={info.get('cash'):,.2f} sharpe={metrics.sharpe_ratio:.3f}")
             obs, _ = env.reset()
             episode_return = 0.0
 
@@ -177,11 +203,20 @@ def train_agent(env: DeepScalperEnv, tcfg: TrainConfig, ckpt_dir: str = "", *, r
 
         if step % 10_000 == 0 and step > 0:
             eval_ret = evaluate(env, online, device, episodes=3)
-            print(f"Eval@{step}: avg_return={eval_ret:,.2f}")
-            _save_ckpt(ckpt_dir, step, online, opt, tcfg)
+            recent_perf = monitor.get_recent_performance(5)
+            print(f"Eval@{step}: avg_return={eval_ret:,.2f} recent_sharpe={recent_perf.get('avg_sharpe', 0):.3f}")
+            
+            # Save model if performance is good
+            if monitor.should_save_model(monitor.metrics_history[-1] if monitor.metrics_history else None):
+                _save_ckpt(ckpt_dir, step, online, opt, tcfg)
+                print(f"[DeepScalper] Saved improved model at step {step}")
 
         if save_every and step % save_every == 0 and step > 0:
             _save_ckpt(ckpt_dir, step, online, opt, tcfg)
+            
+            # Print performance report every few saves
+            if step % (save_every * 4) == 0:
+                print(monitor.generate_report())
 
     # Final save
     _save_ckpt(ckpt_dir, step, online, opt, tcfg)
