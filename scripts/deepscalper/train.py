@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Tuple
@@ -16,11 +17,13 @@ try:  # package imports
     from .env import DeepScalperEnv  # type: ignore
     from .model import BranchingDuelingQNet, act_epsilon_greedy  # type: ignore
     from .replay import PrioritizedReplay, Transition  # type: ignore
+    from .monitoring import MetricsTracker, TrainingMetrics, ModelHealthMonitor, DataDriftDetector  # type: ignore
 except Exception:  # fallback
     from config import EnvConfig, TrainConfig  # type: ignore
     from env import DeepScalperEnv  # type: ignore
     from model import BranchingDuelingQNet, act_epsilon_greedy  # type: ignore
     from replay import PrioritizedReplay, Transition  # type: ignore
+    from monitoring import MetricsTracker, TrainingMetrics, ModelHealthMonitor, DataDriftDetector  # type: ignore
 
 
 def soft_update(target: nn.Module, source: nn.Module, tau: float):
@@ -91,6 +94,11 @@ def train_agent(env: DeepScalperEnv, tcfg: TrainConfig, ckpt_dir: str = "", *, r
     opt = optim.Adam(online.parameters(), lr=tcfg.lr)
 
     buffer = PrioritizedReplay(tcfg.buffer_size)
+    
+    # Initialize enhanced monitoring
+    metrics_tracker = MetricsTracker(os.path.join(ckpt_dir, "metrics"))
+    health_monitor = ModelHealthMonitor(online)
+    drift_detector = DataDriftDetector()
 
     obs, _ = env.reset()
     # Resume if requested
@@ -104,6 +112,7 @@ def train_agent(env: DeepScalperEnv, tcfg: TrainConfig, ckpt_dir: str = "", *, r
     target_total = step + tcfg.train_steps
     episode_return = 0.0
     best_eval = -1e9
+    last_health_check = step
 
     while step < target_total:
         eps = linear_schedule(tcfg.eps_start, tcfg.eps_end, step, tcfg.eps_decay_steps)
@@ -166,19 +175,70 @@ def train_agent(env: DeepScalperEnv, tcfg: TrainConfig, ckpt_dir: str = "", *, r
 
             opt.zero_grad()
             loss.backward()
-            nn.utils.clip_grad_norm_(online.parameters(), max_norm=tcfg.grad_clip)
+            
+            # Monitor model health
+            health_monitor.update_gradient_norms()
+            grad_norm = nn.utils.clip_grad_norm_(online.parameters(), max_norm=tcfg.grad_clip)
+            
             opt.step()
+            
+            # Update weight norms and monitor health
+            health_monitor.update_weight_norms()
 
             # priorities
             td_err = (td_p.abs() + td_q.abs()).detach().cpu().numpy()
             buffer.update_priorities(idxs, td_err)
 
             soft_update(target, online, tcfg.target_update_tau)
+            
+            # Log enhanced training metrics
+            eval_ret = None
+            current_lr = opt.param_groups[0]['lr']
+            
+            metrics = TrainingMetrics(
+                step=step,
+                timestamp=time.time(),
+                loss=float(loss.item()),
+                q_loss=float(q_loss.item()),
+                aux_loss=float(aux_loss.item()),
+                episode_return=episode_return,
+                epsilon=eps,
+                buffer_size=len(buffer),
+                learning_rate=current_lr,
+                grad_norm=float(grad_norm),
+                eval_return=eval_ret,
+                cash=info.get('cash')
+            )
+            metrics_tracker.log_training_metrics(metrics)
 
+        # Periodic evaluation and health monitoring
         if step % 10_000 == 0 and step > 0:
             eval_ret = evaluate(env, online, device, episodes=3)
             print(f"Eval@{step}: avg_return={eval_ret:,.2f}")
+            
+            # Update metrics with evaluation result
+            if hasattr(metrics_tracker, 'training_history') and metrics_tracker.training_history:
+                last_metrics = metrics_tracker.training_history[-1]
+                last_metrics.eval_return = eval_ret
+            
             _save_ckpt(ckpt_dir, step, online, opt, tcfg)
+            
+        # Health check and drift detection
+        if step - last_health_check >= 5000:
+            health_report = health_monitor.check_health()
+            if any([health_report['gradient_explosion'], health_report['gradient_vanishing'], 
+                   health_report['weight_explosion'], health_report['dead_neurons'] > 5]):
+                print(f"⚠️  Model health warning at step {step}: {health_report}")
+            
+            # Check for data drift using recent observations
+            if len(buffer) > 1000:
+                recent_batch, _ = buffer.sample(500)
+                features_dict = {'observations': recent_batch.s}
+                drift_detected = drift_detector.detect_drift(features_dict)
+                if any(drift_detected.values()):
+                    print(f"🔄 Data drift detected at step {step}: {drift_detected}")
+            
+            last_health_check = step
 
         if save_every and step % save_every == 0 and step > 0:
             _save_ckpt(ckpt_dir, step, online, opt, tcfg)
