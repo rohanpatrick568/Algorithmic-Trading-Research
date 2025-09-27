@@ -4,10 +4,30 @@ import argparse
 import os
 from datetime import datetime, timedelta
 
-from .config import EnvConfig, TrainConfig
-from .data import load_minute_data
-from .env import DeepScalperEnv
-from .train import train_agent
+# Support running as a module or as a script
+try:
+    from .config import EnvConfig, TrainConfig
+    from .data import load_minute_data
+    from .env import DeepScalperEnv
+    from .train import train_agent
+except ImportError:
+    import importlib, pathlib, sys
+    root = str(pathlib.Path(__file__).resolve().parents[2])
+    if root not in sys.path:
+        sys.path.append(root)
+    
+    config_mod = importlib.import_module("scripts.deepscalper.config")
+    EnvConfig = getattr(config_mod, "EnvConfig")
+    TrainConfig = getattr(config_mod, "TrainConfig")
+    
+    data_mod = importlib.import_module("scripts.deepscalper.data")
+    load_minute_data = getattr(data_mod, "load_minute_data")
+    
+    env_mod = importlib.import_module("scripts.deepscalper.env")
+    DeepScalperEnv = getattr(env_mod, "DeepScalperEnv")
+    
+    train_mod = importlib.import_module("scripts.deepscalper.train")
+    train_agent = getattr(train_mod, "train_agent")
 
 
 def parse_args():
