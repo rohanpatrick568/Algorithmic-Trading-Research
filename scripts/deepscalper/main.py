@@ -47,7 +47,14 @@ def main():
 	env_cfg = EnvConfig(symbol=args.symbol)
 	train_cfg = TrainConfig(train_steps=args.steps)
 
-	md = load_minute_data(args.symbol, args.start, args.end)
+	# Try to load real data, fall back to synthetic if network issues
+	try:
+		md = load_minute_data(args.symbol, args.start, args.end, use_synthetic=False)
+	except Exception as e:
+		print(f"[Main] Real data loading failed: {e}")
+		print(f"[Main] Using synthetic data for training")
+		md = load_minute_data(args.symbol, args.start, args.end, use_synthetic=True)
+	
 	env = DeepScalperEnv(md, env_cfg, train_cfg)
 
 	os.makedirs(args.ckpt, exist_ok=True)

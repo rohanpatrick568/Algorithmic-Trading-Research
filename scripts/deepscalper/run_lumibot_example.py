@@ -25,10 +25,13 @@ def main():
     end = datetime.now()
     start = end - timedelta(days=5)
     # Pick latest checkpoint if available
-    import os, glob
-    ckpt_dir = "c:/Users/patri/Desktop/Algorithmic Trading Research/scripts/deepscalper/checkpoints"
+    import os, glob, pathlib
+    # Use repo-relative checkpoints dir (created by training) instead of user-specific absolute path
+    default_ckpt_dir = pathlib.Path(__file__).resolve().parent / "checkpoints"
+    ckpt_dir = os.environ.get("DS_CKPT_DIR", str(default_ckpt_dir))
+    os.makedirs(ckpt_dir, exist_ok=True)
     ckpts = sorted(glob.glob(os.path.join(ckpt_dir, "bdq_*.pt")))
-    model_path = ckpts[-1] if ckpts else "c:/Users/patri/Desktop/Algorithmic Trading Research/scripts/deepscalper/ckpt_test.pth"
+    model_path = ckpts[-1] if ckpts else os.path.join(ckpt_dir, "ckpt_test.pth")
 
     strategy_cls = DeepScalperLumibotStrategy
 
