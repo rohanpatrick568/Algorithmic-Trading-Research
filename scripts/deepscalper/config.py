@@ -14,6 +14,17 @@ class EnvConfig:
     price_bins: int = 21  # BDQ discrete relative price levels
     qty_bins: int = 11    # BDQ discrete qty levels
     holdout_days: int = 0  # set >0 to reserve test days at tail
+    
+    # Phase 1 enhancements
+    slippage_model: str = "proportional"  # "proportional", "fixed", "adaptive"
+    slippage_random_shock: float = 0.5  # Additional random component in bps
+    position_penalty_multiplier: float = 2.0  # Penalty multiplier when max position exceeded
+    fractional_fees: bool = False  # Different fees for session open/close
+    session_open_fee_rate: float = 0.0003  # Lower fees at session open
+    session_close_fee_rate: float = 0.0007  # Higher fees at session close
+    hard_position_cap: bool = True  # Hard cap vs soft penalty
+    episode_sampling_mode: str = "random"  # "random", "mixed", "hard_days"
+    hard_days_vol_threshold: float = 0.75  # Vol percentile for hard days
 
 
 @dataclass

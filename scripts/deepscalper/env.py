@@ -48,6 +48,48 @@ def _to_float(x) -> float:
     return float(arr[0]) if arr.size > 0 else float(x)
 
 
+def calculate_slippage(env_cfg: EnvConfig, price: float, volume: int, position_size: float, time_of_day: int) -> float:
+    """Calculate adaptive slippage based on market conditions and position size"""
+    base_slippage_bps = env_cfg.slippage_bps
+    
+    if env_cfg.slippage_model == "fixed":
+        return price * base_slippage_bps / 10000
+    
+    # Proportional slippage based on position size and volume
+    volume_impact = min(0.1, abs(position_size) / max(volume, 1000))  # Cap at 10% impact
+    size_multiplier = 1.0 + volume_impact * 2  # Up to 3x slippage for large orders
+    
+    if env_cfg.slippage_model == "adaptive":
+        # Add time-of-day effects (higher at open/close)
+        minutes_from_open = time_of_day % 390  # Minutes since 9:30 AM
+        if minutes_from_open < 30 or minutes_from_open > 360:  # First/last 30 mins
+            size_multiplier *= 1.5
+        
+    # Add random shock component
+    if env_cfg.slippage_random_shock > 0:
+        random_shock = np.random.normal(0, env_cfg.slippage_random_shock / 10000)
+        size_multiplier += random_shock
+    
+    return price * base_slippage_bps * size_multiplier / 10000
+
+
+def calculate_fees(env_cfg: EnvConfig, notional: float, time_of_day: int) -> float:
+    """Calculate trading fees with optional session-based variation"""
+    if not env_cfg.fractional_fees:
+        return notional * env_cfg.fee_rate
+    
+    # Use different fees based on time of day
+    minutes_from_open = time_of_day % 390
+    if minutes_from_open < 60:  # First hour - session open
+        fee_rate = env_cfg.session_open_fee_rate
+    elif minutes_from_open > 330:  # Last hour - session close
+        fee_rate = env_cfg.session_close_fee_rate
+    else:
+        fee_rate = env_cfg.fee_rate
+        
+    return notional * fee_rate
+
+
 class DeepScalperEnv(gym.Env):
     metadata = {"render.modes": ["human"]}
 
@@ -93,6 +135,27 @@ class DeepScalperEnv(gym.Env):
         # filter days shorter than lookback + horizon
         horizon = self.train_cfg.hindsight_horizon
         out = [p for p in out if p[1]-p[0] >= self.lookback + max(60, horizon)+5]
+        
+        # Calculate daily volatility for hard day identification
+        if self.env_cfg.episode_sampling_mode in ["mixed", "hard_days"]:
+            self._day_volatilities = []
+            for start_idx, end_idx in out:
+                day_closes = self.md.df.iloc[start_idx:end_idx]['close'].values
+                if len(day_closes) > 1:
+                    day_vol = realized_vol(day_closes, len(day_closes))
+                else:
+                    day_vol = 0.0
+                self._day_volatilities.append(day_vol)
+            
+            # Calculate volatility threshold for hard days
+            if len(self._day_volatilities) > 0:
+                self._vol_threshold = np.percentile(self._day_volatilities, self.env_cfg.hard_days_vol_threshold * 100)
+            else:
+                self._vol_threshold = 0.0
+        else:
+            self._day_volatilities = []
+            self._vol_threshold = 0.0
+            
         return out
 
     def _reset_episode_state(self):
@@ -106,8 +169,31 @@ class DeepScalperEnv(gym.Env):
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         self._reset_episode_state()
-        # choose random day
-        day_idx = self._rng.randint(0, len(self.day_indices))
+        
+        # Choose day based on sampling mode
+        if self.env_cfg.episode_sampling_mode == "hard_days" and len(self._day_volatilities) > 0:
+            # Only sample from high volatility days
+            hard_day_indices = [i for i, vol in enumerate(self._day_volatilities) if vol >= self._vol_threshold]
+            if hard_day_indices:
+                day_idx = self._rng.choice(hard_day_indices)
+            else:
+                day_idx = self._rng.randint(0, len(self.day_indices))
+        elif self.env_cfg.episode_sampling_mode == "mixed" and len(self._day_volatilities) > 0:
+            # 70% normal days, 30% hard days
+            if self._rng.random() < 0.7:
+                # Normal day sampling
+                day_idx = self._rng.randint(0, len(self.day_indices))
+            else:
+                # Hard day sampling
+                hard_day_indices = [i for i, vol in enumerate(self._day_volatilities) if vol >= self._vol_threshold]
+                if hard_day_indices:
+                    day_idx = self._rng.choice(hard_day_indices)
+                else:
+                    day_idx = self._rng.randint(0, len(self.day_indices))
+        else:
+            # Random sampling (default)
+            day_idx = self._rng.randint(0, len(self.day_indices))
+            
         a, b = self.day_indices[day_idx]
         # limit to episode_minutes windows if available
         length = min(self.env_cfg.episode_minutes, b-a)
@@ -136,45 +222,65 @@ class DeepScalperEnv(gym.Env):
 
         max_shares = (self.cash + self.pos * price) * self.env_cfg.max_position_pct / max(price, 1e-6)
         shares = float(np.floor(qty_frac * max_shares))
-
-        # Simulate limit-like execution: if favorable price traded inside [low,high]
-        bar = self.md.df.iloc[self.t]
-        low_v = _to_float(bar["low"]) 
-        high_v = _to_float(bar["high"]) 
-
-        executed = False
-        exec_price = price
-        if side > 0:
-            if low_v <= target_price <= high_v:
-                exec_price = target_price
-                executed = True
+        
+        # Check position limits with configurable enforcement
+        current_position_value = abs(self.pos * price)
+        max_position_value = self.cash * self.env_cfg.max_position_pct
+        position_exceeded = current_position_value > max_position_value
+        
+        if position_exceeded and self.env_cfg.hard_position_cap:
+            # Hard cap - reject the trade
+            shares = 0
+            executed = False
+            exec_price = price
         else:
-            if low_v <= target_price <= high_v:
-                exec_price = target_price
-                executed = True
+            # Simulate limit-like execution: if favorable price traded inside [low,high]
+            bar = self.md.df.iloc[self.t]
+            low_v = _to_float(bar["low"]) 
+            high_v = _to_float(bar["high"])
+            volume_v = _to_float(bar["volume"])
 
-        if not executed and shares > 0:
-            slip = self.env_cfg.slippage_bps * 1e-4 * price
-            exec_price = price + (slip if side > 0 else -slip)
-            executed = True
+            executed = False
+            exec_price = price
+            if side > 0:
+                if low_v <= target_price <= high_v:
+                    exec_price = target_price
+                    executed = True
+            else:
+                if low_v <= target_price <= high_v:
+                    exec_price = target_price
+                    executed = True
+
+            if not executed and shares > 0:
+                # Use enhanced slippage calculation
+                slip = calculate_slippage(self.env_cfg, price, volume_v, shares, self.t - self._episode_slice[0])
+                exec_price = price + (slip if side > 0 else -slip)
+                executed = True
 
         fee = 0.0
+        position_penalty = 0.0
         if executed and shares > 0:
+            notional = exec_price * shares
+            
+            # Use enhanced fee calculation
+            fee = calculate_fees(self.env_cfg, notional, self.t - self._episode_slice[0])
+            
             if side > 0:
-                cost = exec_price * shares
-                fee = self.env_cfg.fee_rate * cost
-                self.cash -= cost + fee
+                self.cash -= notional + fee
                 self.pos += shares
             else:
-                revenue = exec_price * shares
-                fee = self.env_cfg.fee_rate * revenue
-                self.cash += revenue - fee
+                self.cash += notional - fee
                 self.pos -= shares
+                
+        # Apply position penalty if soft cap exceeded
+        if position_exceeded and not self.env_cfg.hard_position_cap:
+            excess_ratio = (current_position_value - max_position_value) / max_position_value
+            position_penalty = excess_ratio * self.env_cfg.position_penalty_multiplier * abs(r)
 
         # mark-to-market PnL from t->t+1
         next_price = _to_float(self.md.df.iloc[self.t + 1]["close"]) if self.t + 1 < self._episode_slice[1] else price
         pnl_inst = (next_price - price) * self.pos
-        r = pnl_inst - fee
+        r = pnl_inst - fee - position_penalty
 
         # Hindsight bonus
         h = self.train_cfg.hindsight_horizon

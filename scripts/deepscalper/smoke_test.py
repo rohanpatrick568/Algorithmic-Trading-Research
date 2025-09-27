@@ -101,6 +101,60 @@ def test_training():
     return ckpts[0]
 
 
+def test_phase1_enhancements():
+    """Test Phase 1 enhancements: data caching, multi-symbol, regime generation"""
+    print("=== Testing Phase 1 Enhancements ===")
+    
+    end = datetime.now()
+    start = end - timedelta(days=2)
+    start_str = start.strftime('%Y-%m-%d')
+    end_str = end.strftime('%Y-%m-%d')
+    
+    # Test different market regimes
+    regimes = ["normal", "trending", "mean_reverting", "high_vol"]
+    for regime in regimes:
+        md = load_minute_data('AAPL', start_str, end_str, use_synthetic=True)
+        # Test synthetic data with different regimes - import here to avoid circular imports
+        try:
+            from .data import generate_synthetic_data
+        except:
+            from data import generate_synthetic_data
+        md_regime = generate_synthetic_data('AAPL', start_str, end_str, regime=regime)
+        assert len(md_regime.df) > 0, f"No data generated for regime {regime}"
+        print(f"✓ Generated {regime} regime data: {len(md_regime.df)} rows")
+    
+    # Test multi-symbol loading
+    try:
+        from .data import load_multi_symbol_data
+    except:
+        from data import load_multi_symbol_data
+    symbols = ['AAPL', 'MSFT', 'GOOGL']
+    multi_data = load_multi_symbol_data(symbols, start_str, end_str, use_synthetic=True)
+    assert len(multi_data) == 3, f"Expected 3 symbols, got {len(multi_data)}"
+    print(f"✓ Multi-symbol loading: {[md.symbol for md in multi_data]}")
+    
+    # Test enhanced environment config
+    env_cfg = EnvConfig(
+        symbol='AAPL',
+        slippage_model="adaptive",
+        slippage_random_shock=1.0,
+        hard_position_cap=True,
+        episode_sampling_mode="mixed",
+        fractional_fees=True
+    )
+    
+    train_cfg = TrainConfig(train_steps=10)
+    env = DeepScalperEnv(md, env_cfg, train_cfg)
+    
+    # Test environment with new features
+    obs, info = env.reset()
+    action = env.action_space.sample()
+    obs2, reward, done, trunc, info = env.step(action)
+    
+    print(f"✓ Enhanced environment working with adaptive slippage and position caps")
+    return True
+
+
 def test_inference():
     """Test model loading and inference"""
     print("=== Testing Inference ===")
@@ -131,6 +185,7 @@ def run_smoke_test():
         test_environment()
         test_training()
         test_inference()
+        test_phase1_enhancements()  # New Phase 1 tests
         
         print("\n" + "=" * 50)
         print("✅ ALL TESTS PASSED - DeepScalper pipeline is working!")

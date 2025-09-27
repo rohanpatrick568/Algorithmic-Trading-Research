@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Tuple, List, Optional
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -11,6 +13,73 @@ import pandas as pd
 @dataclass
 class MarketData:
     df: pd.DataFrame  # columns: open, high, low, close, volume, indicators...
+    symbol: str = "UNKNOWN"
+    
+    def __post_init__(self):
+        """Validate data quality"""
+        self.validate_data()
+    
+    def validate_data(self):
+        """Perform basic data quality checks"""
+        required_cols = ['open', 'high', 'low', 'close', 'volume']
+        missing_cols = [col for col in required_cols if col not in self.df.columns]
+        if missing_cols:
+            raise ValueError(f"Missing required columns: {missing_cols}")
+        
+        # Check for zero/negative prices
+        price_cols = ['open', 'high', 'low', 'close']
+        for col in price_cols:
+            if (self.df[col] <= 0).any():
+                print(f"Warning: Found zero/negative prices in {col} for {self.symbol}")
+        
+        # Check for zero volume (warn but don't fail)
+        if (self.df['volume'] == 0).any():
+            zero_vol_count = (self.df['volume'] == 0).sum()
+            print(f"Warning: Found {zero_vol_count} zero volume bars for {self.symbol}")
+        
+        # Check for gaps in data (missing timestamps) - simplified validation
+        if len(self.df) > 1:
+            try:
+                time_diffs = self.df.index.to_series().diff().dropna()
+                expected_diff = pd.Timedelta(minutes=1)
+                # Simple count-based gap detection
+                large_gaps = sum(1 for diff in time_diffs if diff > expected_diff * 2)
+                if large_gaps > 0:
+                    print(f"Warning: Found {large_gaps} time gaps in data for {self.symbol}")
+            except Exception:
+                # Skip gap detection if there are index issues
+                pass
+
+
+def get_cache_path(symbol: str, start: str, end: str) -> Path:
+    """Get cache file path for market data"""
+    cache_dir = Path.cwd() / "data_cache"
+    cache_dir.mkdir(exist_ok=True)
+    cache_file = f"{symbol}_{start}_{end}.parquet"
+    return cache_dir / cache_file
+
+
+def save_to_cache(df: pd.DataFrame, symbol: str, start: str, end: str):
+    """Save dataframe to Parquet cache"""
+    try:
+        cache_path = get_cache_path(symbol, start, end)
+        df.to_parquet(cache_path)
+        print(f"[DataCache] Saved {symbol} data to {cache_path}")
+    except Exception as e:
+        print(f"[DataCache] Failed to save cache: {e}")
+
+
+def load_from_cache(symbol: str, start: str, end: str) -> Optional[pd.DataFrame]:
+    """Load dataframe from Parquet cache if available"""
+    try:
+        cache_path = get_cache_path(symbol, start, end)
+        if cache_path.exists():
+            df = pd.read_parquet(cache_path)
+            print(f"[DataCache] Loaded {symbol} data from cache ({len(df)} rows)")
+            return df
+    except Exception as e:
+        print(f"[DataCache] Failed to load cache: {e}")
+    return None
 
 
 def rsi(series: pd.Series, period: int = 14) -> pd.Series:
@@ -60,8 +129,16 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     return out.dropna().reset_index(drop=True)
 
 
-def generate_synthetic_data(symbol: str, start: str, end: str, initial_price: float = 150.0) -> MarketData:
-    """Generate synthetic minute-level OHLCV data for testing purposes."""
+def generate_synthetic_data(symbol: str, start: str, end: str, initial_price: float = 150.0, regime: str = "normal") -> MarketData:
+    """Generate synthetic minute-level OHLCV data for testing purposes.
+    
+    Args:
+        symbol: Stock symbol
+        start: Start date string (YYYY-MM-DD)
+        end: End date string (YYYY-MM-DD)  
+        initial_price: Starting price for simulation
+        regime: Market regime - "normal", "trending", "mean_reverting", "high_vol"
+    """
     from datetime import datetime, timedelta
     
     start_dt = datetime.strptime(start, "%Y-%m-%d")
@@ -77,12 +154,35 @@ def generate_synthetic_data(symbol: str, start: str, end: str, initial_price: fl
             timestamps.append(market_open + timedelta(minutes=minute))
         current_dt += timedelta(days=1)
     
-    # Generate synthetic price data with random walks
+    # Generate synthetic price data based on regime
     np.random.seed(42)  # For reproducibility
     n_points = len(timestamps)
     
-    # Generate price movements using random walk with drift
-    returns = np.random.normal(0.0001, 0.002, n_points)  # Small drift, realistic volatility
+    if regime == "trending":
+        # Strong upward trend with lower volatility
+        returns = np.random.normal(0.0005, 0.001, n_points)  # Higher drift, lower vol
+    elif regime == "mean_reverting":
+        # Mean-reverting with periodic cycles
+        base_price = initial_price
+        returns = []
+        price = initial_price
+        for i in range(n_points):
+            # Pull back to mean with some noise
+            mean_revert = -0.001 * (price - base_price) / base_price
+            noise = np.random.normal(0, 0.002)
+            ret = mean_revert + noise
+            returns.append(ret)
+            price *= (1 + ret)
+        returns = np.array(returns)
+    elif regime == "high_vol":
+        # High volatility clustering
+        returns = np.random.normal(0.0001, 0.004, n_points)  # Much higher vol
+        # Add volatility clustering
+        vol_regime = np.random.binomial(1, 0.1, n_points)  # 10% chance of high vol periods
+        returns = returns * (1 + vol_regime * 2)  # 3x vol during high vol periods
+    else:  # normal
+        returns = np.random.normal(0.0001, 0.002, n_points)  # Small drift, realistic volatility
+    
     prices = initial_price * np.exp(np.cumsum(returns))
     
     # Generate OHLCV bars
@@ -108,35 +208,74 @@ def generate_synthetic_data(symbol: str, start: str, end: str, initial_price: fl
     
     df = pd.DataFrame(data, index=timestamps)
     df = add_indicators(df)
-    return MarketData(df=df)
+    return MarketData(df=df, symbol=symbol)
 
 
-def load_minute_data(symbol: str, start: str, end: str, use_synthetic: bool = False) -> MarketData:
-    """Load minute data from yfinance or generate synthetic data for testing."""
+def load_minute_data(symbol: str, start: str, end: str, use_synthetic: bool = False, use_cache: bool = True) -> MarketData:
+    """Load minute data from yfinance, cache, or generate synthetic data.
+    
+    Args:
+        symbol: Stock symbol to load
+        start: Start date (YYYY-MM-DD)
+        end: End date (YYYY-MM-DD)
+        use_synthetic: Force synthetic data generation
+        use_cache: Whether to use/save Parquet cache
+    """
     if use_synthetic:
         print(f"[DataLoader] Generating synthetic data for {symbol} from {start} to {end}")
         return generate_synthetic_data(symbol, start, end)
     
+    # Try cache first
+    if use_cache:
+        cached_df = load_from_cache(symbol, start, end)
+        if cached_df is not None:
+            return MarketData(df=cached_df, symbol=symbol)
+    
+    # Try to load from yfinance
     try:
         import yfinance as yf  # type: ignore
-    except Exception as e:
-        raise RuntimeError("yfinance is required to load data") from e
-
-    try:
+        print(f"[DataLoader] Downloading {symbol} data from yfinance...")
+        
         df = yf.download(symbol, start=start, end=end, interval="1m", progress=False)
         if df.empty:
-            print(f"[DataLoader] No data from yfinance, falling back to synthetic data")
+            print(f"[DataLoader] No data from yfinance for {symbol}, falling back to synthetic data")
             return generate_synthetic_data(symbol, start, end)
+            
+        # Clean up column names
+        df = df.rename(columns={
+            "Open": "open",
+            "High": "high", 
+            "Low": "low",
+            "Close": "close",
+            "Volume": "volume",
+        })[["open", "high", "low", "close", "volume"]]
+        
+        # Add technical indicators
+        df = add_indicators(df)
+        
+        # Save to cache
+        if use_cache:
+            save_to_cache(df, symbol, start, end)
+            
+        return MarketData(df=df, symbol=symbol)
+        
     except Exception as e:
-        print(f"[DataLoader] yfinance failed ({e}), using synthetic data")
+        print(f"[DataLoader] yfinance failed for {symbol} ({e}), using synthetic data")
         return generate_synthetic_data(symbol, start, end)
 
-    df = df.rename(columns={
-        "Open": "open",
-        "High": "high",
-        "Low": "low",
-        "Close": "close",
-        "Volume": "volume",
-    })[["open", "high", "low", "close", "volume"]]
-    df = add_indicators(df)
-    return MarketData(df=df)
+
+def load_multi_symbol_data(symbols: List[str], start: str, end: str, use_synthetic: bool = False, use_cache: bool = True) -> List[MarketData]:
+    """Load data for multiple symbols"""
+    results = []
+    for symbol in symbols:
+        try:
+            md = load_minute_data(symbol, start, end, use_synthetic=use_synthetic, use_cache=use_cache)
+            results.append(md)
+        except Exception as e:
+            print(f"[DataLoader] Failed to load {symbol}: {e}")
+            # Generate synthetic fallback
+            md = generate_synthetic_data(symbol, start, end)
+            results.append(md)
+    
+    print(f"[DataLoader] Loaded {len(results)} symbols: {[md.symbol for md in results]}")
+    return results
