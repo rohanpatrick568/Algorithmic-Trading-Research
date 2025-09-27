@@ -1,0 +1,1 @@
+{"step": 0, "timestamp": 1759013996.739952, "loss": 1.0842441281110915, "q_loss": 0.758970889677764, "aux_loss": 0.32527323843332745, "episode_return": -0.011507068986709496, "epsilon": 1.0, "buffer_size": 0, "learning_rate": 0.001, "grad_norm": 0.8449589820694924, "eval_return": null, "cash": null}
