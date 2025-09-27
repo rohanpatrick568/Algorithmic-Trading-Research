@@ -67,7 +67,7 @@ class PerformanceMonitor:
     
     def __init__(self, log_dir: str = "logs"):
         self.log_dir = Path(log_dir)
-        self.log_dir.mkdir(exist_ok=True)
+        self.log_dir.mkdir(parents=True, exist_ok=True)
         
         self.metrics_file = self.log_dir / "training_metrics.jsonl"
         self.summary_file = self.log_dir / "performance_summary.json"
