@@ -175,6 +175,53 @@ def test_inference():
     print(f"✓ Inference config created with model: {inf_cfg.model_path}")
 
 
+def test_phase2_enhancements():
+    """Test Phase 2 enhancements: distributional heads, EMA, cosine scheduling"""
+    print("=== Testing Phase 2 Enhancements ===")
+    
+    md = test_data_generation()
+    
+    # Test enhanced model configurations
+    configs_to_test = [
+        {"use_distributional": True, "num_atoms": 21},
+        {"use_ema": True, "ema_decay": 0.99},
+        {"use_cosine_schedule": True},
+        {"aux_downside_weight": 0.1, "aux_drawdown_weight": 0.1}
+    ]
+    
+    for i, config_updates in enumerate(configs_to_test):
+        print(f"Testing configuration {i+1}: {config_updates}")
+        
+        env_cfg = EnvConfig(symbol='AAPL')
+        train_cfg = TrainConfig(train_steps=25, warmup_steps=5, **config_updates)
+        env = DeepScalperEnv(md, env_cfg, train_cfg)
+        
+        # Test enhanced environment step
+        obs, info = env.reset()
+        action = env.action_space.sample()
+        obs2, reward, done, trunc, info = env.step(action)
+        
+        # Check for new auxiliary targets
+        assert "aux_vol_target" in info, "Missing aux_vol_target"
+        assert "aux_downside_target" in info, "Missing aux_downside_target"  
+        assert "aux_drawdown_target" in info, "Missing aux_drawdown_target"
+        
+        # Test training with enhanced model
+        ckpt_dir = f"/tmp/deepscalper_phase2_test_{i}"
+        os.makedirs(ckpt_dir, exist_ok=True)
+        train_agent(env, train_cfg, ckpt_dir=ckpt_dir, resume=False, save_every=20)
+        
+        # Verify checkpoint was created
+        import glob
+        ckpts = glob.glob(os.path.join(ckpt_dir, "*.pt"))
+        assert len(ckpts) > 0, f"No checkpoints created for config {i+1}"
+        
+        print(f"✓ Configuration {i+1} working: {len(ckpts)} checkpoints created")
+    
+    print("✓ All Phase 2 enhancements working correctly")
+    return True
+
+
 def run_smoke_test():
     """Run complete smoke test"""
     print("DeepScalper Smoke Test")
@@ -185,7 +232,8 @@ def run_smoke_test():
         test_environment()
         test_training()
         test_inference()
-        test_phase1_enhancements()  # New Phase 1 tests
+        test_phase1_enhancements()  # Phase 1 tests
+        test_phase2_enhancements()  # Phase 2 tests
         
         print("\n" + "=" * 50)
         print("✅ ALL TESTS PASSED - DeepScalper pipeline is working!")
@@ -196,6 +244,11 @@ def run_smoke_test():
         import traceback
         traceback.print_exc()
         return False
+
+
+if __name__ == "__main__":
+    success = run_smoke_test()
+    exit(0 if success else 1)
 
 
 if __name__ == "__main__":

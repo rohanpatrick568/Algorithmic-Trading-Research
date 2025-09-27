@@ -17,7 +17,10 @@ class Transition:
     r: float
     s2: np.ndarray
     done: bool
-    aux_target: float
+    aux_target: float  # Legacy volatility target
+    aux_vol_target: float = 0.0  # Volatility target (explicit)
+    aux_downside_target: float = 0.0  # Downside deviation target
+    aux_drawdown_target: float = 0.0  # Drawdown target
     weight: float = 1.0
     idx: int = -1
 
@@ -59,6 +62,9 @@ class PrioritizedReplay:
             s2=np.stack([t.s2 for t in samples]),
             done=np.array([t.done for t in samples], dtype=np.float32),
             aux_target=np.array([t.aux_target for t in samples], dtype=np.float32),
+            aux_vol_target=np.array([t.aux_vol_target for t in samples], dtype=np.float32),
+            aux_downside_target=np.array([t.aux_downside_target for t in samples], dtype=np.float32),
+            aux_drawdown_target=np.array([t.aux_drawdown_target for t in samples], dtype=np.float32),
             weight=weights.astype(np.float32),
             idx=-1,
         )

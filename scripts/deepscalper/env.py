@@ -26,6 +26,27 @@ def realized_vol(close: np.ndarray, horizon: int) -> float:
     return float(np.std(r) * np.sqrt(252*390/horizon))
 
 
+def downside_deviation(returns: np.ndarray, threshold: float = 0.0) -> float:
+    """Calculate downside deviation below threshold"""
+    if len(returns) < 2:
+        return 0.0
+    downside_returns = returns[returns < threshold]
+    if len(downside_returns) == 0:
+        return 0.0
+    return float(np.std(downside_returns))
+
+
+def max_drawdown_depth(prices: np.ndarray) -> float:
+    """Calculate maximum drawdown as percentage of peak"""
+    if len(prices) < 2:
+        return 0.0
+    
+    peak = np.maximum.accumulate(prices)
+    drawdown = (prices - peak) / peak
+    max_dd = np.min(drawdown)
+    return float(abs(max_dd))
+
+
 def _to_float(x) -> float:
     """Robustly extract a Python float from possible pandas/NumPy scalars or 1-length Series/arrays."""
     # Fast path for numeric types
@@ -305,8 +326,29 @@ class DeepScalperEnv(gym.Env):
             "cash": self.cash,
         }
 
-        aux_target = realized_vol(np.array(self._last_prices[-h - 1 :]), h) if len(self._last_prices) >= h + 2 else 0.0
-        return obs, r_h, done, False, {**info, "aux_target": aux_target, "r_raw": r}
+        # Calculate all auxiliary targets
+        h = self.train_cfg.hindsight_horizon
+        if len(self._last_prices) >= h + 2:
+            recent_prices = np.array(self._last_prices[-h - 1:])
+            recent_returns = np.diff(np.log(recent_prices + 1e-12))
+            
+            aux_vol_target = realized_vol(recent_prices, h)
+            aux_downside_target = downside_deviation(recent_returns)
+            aux_drawdown_target = max_drawdown_depth(recent_prices)
+        else:
+            aux_vol_target = 0.0
+            aux_downside_target = 0.0
+            aux_drawdown_target = 0.0
+            
+        aux_targets = {
+            "aux_target": aux_vol_target,  # Legacy compatibility
+            "aux_vol_target": aux_vol_target,
+            "aux_downside_target": aux_downside_target,
+            "aux_drawdown_target": aux_drawdown_target,
+            "r_raw": r
+        }
+        
+        return obs, r_h, done, False, {**info, **aux_targets}
 
     def _build_obs(self) -> np.ndarray:
         a, b = self._episode_slice

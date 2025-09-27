@@ -49,6 +49,16 @@ class TrainConfig:
 
     # Risk-aware auxiliary task (Section 4.3): predict realized volatility
     aux_weight: float = 0.1
+    
+    # Phase 2 enhancements
+    use_distributional: bool = False  # Enable C51 distributional RL
+    num_atoms: int = 51  # Number of atoms for value distribution
+    use_ema: bool = False  # Enable EMA weight averaging (Polyak)
+    ema_decay: float = 0.999  # EMA decay rate
+    use_cosine_schedule: bool = False  # Use cosine epsilon schedule
+    aux_downside_weight: float = 0.05  # Weight for downside deviation prediction
+    aux_drawdown_weight: float = 0.05  # Weight for drawdown prediction
+    advantage_normalization: bool = True  # Normalize advantages
 
 
 FEATURES = {

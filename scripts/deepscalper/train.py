@@ -14,12 +14,12 @@ import torch.nn.functional as F
 try:  # package imports
     from .config import EnvConfig, TrainConfig  # type: ignore
     from .env import DeepScalperEnv  # type: ignore
-    from .model import BranchingDuelingQNet, act_epsilon_greedy  # type: ignore
+    from .model import BranchingDuelingQNet, act_epsilon_greedy, EMAWrapper, cosine_epsilon_schedule  # type: ignore
     from .replay import PrioritizedReplay, Transition  # type: ignore
 except Exception:  # fallback
     from config import EnvConfig, TrainConfig  # type: ignore
     from env import DeepScalperEnv  # type: ignore
-    from model import BranchingDuelingQNet, act_epsilon_greedy  # type: ignore
+    from model import BranchingDuelingQNet, act_epsilon_greedy, EMAWrapper, cosine_epsilon_schedule  # type: ignore
     from replay import PrioritizedReplay, Transition  # type: ignore
 
 
@@ -30,7 +30,7 @@ def soft_update(target: nn.Module, source: nn.Module, tau: float):
 
 
 def linear_schedule(start: float, end: float, step: int, total: int) -> float:
-    t = min(step / total, 1.0)
+    t = min(step / max(total, 1), 1.0)
     return start + t * (end - start)
 
 
@@ -85,9 +85,30 @@ def train_agent(env: DeepScalperEnv, tcfg: TrainConfig, ckpt_dir: str = "", *, r
     price_bins = env.action_space.nvec[0]
     qty_bins = env.action_space.nvec[1]
 
-    online = BranchingDuelingQNet(obs_dim, price_bins, qty_bins).to(device)
-    target = BranchingDuelingQNet(obs_dim, price_bins, qty_bins).to(device)
+    # Create models with Phase 2 enhancements
+    online = BranchingDuelingQNet(
+        obs_dim, 
+        price_bins, 
+        qty_bins, 
+        use_distributional=tcfg.use_distributional,
+        num_atoms=tcfg.num_atoms
+    ).to(device)
+    
+    target = BranchingDuelingQNet(
+        obs_dim, 
+        price_bins, 
+        qty_bins, 
+        use_distributional=tcfg.use_distributional,
+        num_atoms=tcfg.num_atoms
+    ).to(device)
+    
     target.load_state_dict(online.state_dict())
+    
+    # Optional EMA wrapper
+    if tcfg.use_ema:
+        online_ema = EMAWrapper(online, decay=tcfg.ema_decay)
+    else:
+        online_ema = None
     opt = optim.Adam(online.parameters(), lr=tcfg.lr)
 
     buffer = PrioritizedReplay(tcfg.buffer_size)
@@ -106,10 +127,21 @@ def train_agent(env: DeepScalperEnv, tcfg: TrainConfig, ckpt_dir: str = "", *, r
     best_eval = -1e9
 
     while step < target_total:
-        eps = linear_schedule(tcfg.eps_start, tcfg.eps_end, step, tcfg.eps_decay_steps)
+        # Use enhanced epsilon scheduling if enabled
+        if tcfg.use_cosine_schedule:
+            eps = cosine_epsilon_schedule(step, tcfg.eps_decay_steps, tcfg.eps_start, tcfg.eps_end)
+        else:
+            eps = linear_schedule(tcfg.eps_start, tcfg.eps_end, step, tcfg.eps_decay_steps)
+            
         with torch.no_grad():
             o = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
-            qp, qq, _, _ = online(o)
+            # Handle different model output shapes
+            model_output = online(o)
+            if len(model_output) == 4:  # Legacy model
+                qp, qq, _, _ = model_output
+            else:  # Enhanced model with more aux outputs
+                qp, qq, _, _, _, _ = model_output
+                
             ap, aq = act_epsilon_greedy(qp, qq, eps)
             action = np.array([int(ap.item()), int(aq.item())], dtype=np.int64)
 
@@ -121,7 +153,10 @@ def train_agent(env: DeepScalperEnv, tcfg: TrainConfig, ckpt_dir: str = "", *, r
             r=float(r),
             s2=obs2.astype(np.float32),
             done=bool(done),
-            aux_target=float(info.get("aux_target", 0.0)),
+            aux_target=float(info.get("aux_target", 0.0)),  # Legacy
+            aux_vol_target=float(info.get("aux_vol_target", 0.0)),
+            aux_downside_target=float(info.get("aux_downside_target", 0.0)),
+            aux_drawdown_target=float(info.get("aux_drawdown_target", 0.0)),
         )
         buffer.push(tr)
         obs = obs2
@@ -133,6 +168,10 @@ def train_agent(env: DeepScalperEnv, tcfg: TrainConfig, ckpt_dir: str = "", *, r
             obs, _ = env.reset()
             episode_return = 0.0
 
+        # Update EMA if enabled
+        if tcfg.use_ema and online_ema is not None:
+            online_ema.update()
+
         # learn
         if step > tcfg.warmup_steps and len(buffer) >= tcfg.batch_size and step % tcfg.update_every == 0:
             batch, idxs = buffer.sample(tcfg.batch_size)
@@ -143,11 +182,27 @@ def train_agent(env: DeepScalperEnv, tcfg: TrainConfig, ckpt_dir: str = "", *, r
             r = torch.tensor(batch.r, dtype=torch.float32, device=device)
             done = torch.tensor(batch.done, dtype=torch.float32, device=device)
             w = torch.tensor(batch.weight, dtype=torch.float32, device=device)
-            aux_t = torch.tensor(batch.aux_target, dtype=torch.float32, device=device)
+            
+            # Load all auxiliary targets
+            aux_vol_t = torch.tensor(batch.aux_vol_target, dtype=torch.float32, device=device)
+            aux_downside_t = torch.tensor(batch.aux_downside_target, dtype=torch.float32, device=device)
+            aux_drawdown_t = torch.tensor(batch.aux_drawdown_target, dtype=torch.float32, device=device)
 
-            qp, qq, _, aux = online(s)
+            # Forward pass with enhanced model
+            model_output = online(s)
+            if len(model_output) == 4:  # Legacy model
+                qp, qq, _, aux_vol = model_output
+                aux_downside = aux_drawdown = torch.zeros_like(aux_vol)
+            else:  # Enhanced model
+                qp, qq, _, aux_vol, aux_downside, aux_drawdown = model_output
+                
             with torch.no_grad():
-                qp2, qq2, _, _ = target(s2)
+                target_output = target(s2)
+                if len(target_output) == 4:  # Legacy target
+                    qp2, qq2, _, _ = target_output
+                else:  # Enhanced target
+                    qp2, qq2, _, _, _, _ = target_output
+                    
                 max_qp = qp2.max(dim=1).values
                 max_qq = qq2.max(dim=1).values
                 # branch TD targets added equally
@@ -161,8 +216,16 @@ def train_agent(env: DeepScalperEnv, tcfg: TrainConfig, ckpt_dir: str = "", *, r
             td_q = y_q - q_aq
             q_loss = ((td_p.pow(2) + td_q.pow(2)) * 0.5 * w).mean()
 
-            aux_loss = F.mse_loss(aux, aux_t)
-            loss = q_loss + tcfg.aux_weight * aux_loss
+            # Multi-task auxiliary losses
+            aux_vol_loss = F.mse_loss(aux_vol, aux_vol_t)
+            aux_downside_loss = F.mse_loss(aux_downside, aux_downside_t)
+            aux_drawdown_loss = F.mse_loss(aux_drawdown, aux_drawdown_t)
+            
+            total_aux_loss = (tcfg.aux_weight * aux_vol_loss + 
+                             tcfg.aux_downside_weight * aux_downside_loss +
+                             tcfg.aux_drawdown_weight * aux_drawdown_loss)
+            
+            loss = q_loss + total_aux_loss
 
             opt.zero_grad()
             loss.backward()
