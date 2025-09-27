@@ -9,7 +9,7 @@ Backtesting strategies (Backtrader), risk-aware controls (DeepScalper-inspired),
   - Smoke test using synthetic OHLCV: [scripts/backtrader/test.py](scripts/backtrader/test.py)
 - Reinforcement Learning (DeepScalper-style)
   - Gymnasium environment and BDQ-style scaffolding: [`gym_implementation.TradingEnvGym`](scripts/rl/gym_implementation.py)
-  - Pretrained checkpoints: [models/bdq_test.pt](models/bdq_test.pt), [models/test_bdq.pt](models/test_bdq.pt)
+  - Pretrained checkpoint: [models/bdq.pt](models/bdq.pt)
 - LLM Sentiment (FinLlama-inspired)
   - Research notes and portfolio construction details: [TXTs/LLMSentiment.txt](TXTs/LLMSentiment.txt)
 
@@ -80,7 +80,7 @@ python scripts/rl/gym_implementation.py --symbol AAPL --start 2015-01-01 --end 2
 - Environment and training loop scaffolding modeled after DeepScalper’s intraday framing:
   - Env: [`gym_implementation.TradingEnvGym`](scripts/rl/gym_implementation.py)
   - CLI params: --window, --episodes, --max-steps, --gamma, --lr, --batch, --replay, --warmup, --target-sync, --epsilon-decay-steps.
-  - Checkpoints: [models/bdq_test.pt](models/bdq_test.pt), [models/test_bdq.pt](models/test_bdq.pt)
+  - Main checkpoint: [models/bdq.pt](models/bdq.pt)
 - See DeepScalper methodology and metrics in [TXTs/DeepScalper.txt](TXTs/DeepScalper.txt).
 
 ## Data
@@ -102,7 +102,6 @@ python scripts/rl/gym_implementation.py --symbol AAPL --start 2015-01-01 --end 2
   - [TXTs/LLMSentiment.txt](TXTs/LLMSentiment.txt)
   - [TXTs/FlawlessVictoryStrategy.pine](TXTs/FlawlessVictoryStrategy.pine)
 - [models](models): Saved RL models
-- [PDFs](PDFs): Paper PDFs
 
 ## Troubleshooting
 - PandasData AttributeError: tuple has no attribute lower
