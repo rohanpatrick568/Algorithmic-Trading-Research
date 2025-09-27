@@ -9,8 +9,12 @@ import pandas as pd
 import gymnasium as gym
 from gymnasium import spaces
 
-from .config import EnvConfig, TrainConfig, FEATURES
-from .data import MarketData
+try:  # normal package-relative usage
+    from .config import EnvConfig, TrainConfig, FEATURES  # type: ignore
+    from .data import MarketData  # type: ignore
+except Exception:  # fallback when executed without package context
+    from config import EnvConfig, TrainConfig, FEATURES  # type: ignore
+    from data import MarketData  # type: ignore
 
 
 def realized_vol(close: np.ndarray, horizon: int) -> float:

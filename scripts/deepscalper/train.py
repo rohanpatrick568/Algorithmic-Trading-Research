@@ -11,10 +11,16 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 
-from .config import EnvConfig, TrainConfig
-from .env import DeepScalperEnv
-from .model import BranchingDuelingQNet, act_epsilon_greedy
-from .replay import PrioritizedReplay, Transition
+try:  # package imports
+    from .config import EnvConfig, TrainConfig  # type: ignore
+    from .env import DeepScalperEnv  # type: ignore
+    from .model import BranchingDuelingQNet, act_epsilon_greedy  # type: ignore
+    from .replay import PrioritizedReplay, Transition  # type: ignore
+except Exception:  # fallback
+    from config import EnvConfig, TrainConfig  # type: ignore
+    from env import DeepScalperEnv  # type: ignore
+    from model import BranchingDuelingQNet, act_epsilon_greedy  # type: ignore
+    from replay import PrioritizedReplay, Transition  # type: ignore
 
 
 def soft_update(target: nn.Module, source: nn.Module, tau: float):
