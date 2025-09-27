@@ -37,11 +37,14 @@ If torch with CUDA is desired, install a CUDA-enabled build from pytorch.org.
 The trainer saves rolling checkpoints to `scripts/deepscalper/checkpoints` and resumes from the latest `last.pt` automatically.
 
 ```powershell
-# Short smoke test
+# Short smoke test (module execution)
 python -m scripts.deepscalper.main --symbol AAPL --steps 1000 --save-every 250
 
-# Longer run
+# Longer run (module execution)
 python -m scripts.deepscalper.main --symbol AAPL --steps 50000 --save-every 2000
+
+# Alternative: direct script execution
+python scripts/deepscalper/main.py --symbol AAPL --steps 1000 --save-every 250
 ```
 
 Flags:
@@ -75,7 +78,7 @@ Integrate in your own Lumibot strategy:
 ## Troubleshooting
 - Missing `gymnasium`: install it in your venv – `pip install gymnasium`.
 - Yahoo 1m data error (≤ 8 days): reduce the date range (example already uses 5 days).
-- Relative import error running the example as a script: `run_lumibot_example.py` includes a fallback to import via `scripts.deepscalper.*`.
+- Relative import error running scripts directly: Both `main.py` and `run_lumibot_example.py` include fallback imports to support direct script execution.
 - No module named `lumibot`: install it in the active venv – `pip install lumibot` (then re-run with the same venv python).
 - Checkpoint not loading: ensure files exist under `scripts/deepscalper/checkpoints`. Trainer logs `[DeepScalper] Resumed from step ...` when resume succeeds.
 
