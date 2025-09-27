@@ -157,13 +157,18 @@ See full DeepScalper research summary in [TXTs/DeepScalper.txt](TXTs/DeepScalper
   - Fixes MultiIndex columns, enforces Open/High/Low/Close/Volume/OpenInterest.
 
 ## Repository Layout
-- [scripts/backtrader](scripts/backtrader): Flawless Victory, risk-aware strategy, tests
+- [scripts/backtrader](scripts/backtrader): Flawless Victory strategies and tests
   - [scripts/backtrader/flawless_victory.py](scripts/backtrader/flawless_victory.py)
   - [scripts/backtrader/fv_risk_aware.py](scripts/backtrader/fv_risk_aware.py)
   - [scripts/backtrader/test.py](scripts/backtrader/test.py)
 - [scripts/rl](scripts/rl): Gymnasium RL baseline and tools
   - [scripts/rl/gym_implementation.py](scripts/rl/gym_implementation.py)
-- [scripts/llm](scripts/llm): LLM sentiment utilities (see research in TXTs)
+  - [scripts/rl/rl.py](scripts/rl/rl.py)
+- [scripts/deepscalper](scripts/deepscalper): DeepScalper RL implementation
+  - Complete RL trading environment with PyTorch models
+- [scripts/lumibot](scripts/lumibot): Lumibot strategy implementations
+  - [scripts/lumibot/fv_ra.py](scripts/lumibot/fv_ra.py): Main risk-aware strategy
+  - Essential test files for strategy validation
 - [TXTs](TXTs): Papers and Pine sources
   - [TXTs/DeepScalper.txt](TXTs/DeepScalper.txt)
   - [TXTs/LLMSentiment.txt](TXTs/LLMSentiment.txt)

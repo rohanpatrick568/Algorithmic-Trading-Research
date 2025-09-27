@@ -2,10 +2,23 @@
 env/
 venv/
 .venv/
+
+# Python cache and bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Data and model files
 *.html
 *.log
 *.csv
 *.json
 *.pt
 *.pth
-*.pyc
+
+# IDE and system files
+.vscode/
+.DS_Store
+Thumbs.db
