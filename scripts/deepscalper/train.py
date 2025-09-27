@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import os
+import os, json, hashlib
 from dataclasses import asdict
 from pathlib import Path
 from typing import Tuple
@@ -61,7 +61,58 @@ def _load_latest(ckpt_dir: str, model: nn.Module, opt: optim.Optimizer, map_loca
         return 0
 
 
-def _save_ckpt(ckpt_dir: str, step: int, model: nn.Module, opt: optim.Optimizer, tcfg: TrainConfig):
+def _write_manifest(ckpt_dir: str, env: DeepScalperEnv, tcfg: TrainConfig):
+    """Persist a lightweight manifest describing inference-critical parameters.
+
+    Includes:
+      - price_bins / qty_bins
+      - lookback
+      - feature ordering
+      - env / train config hashes (for traceability)
+    """
+    if not ckpt_dir:
+        return
+    path = Path(ckpt_dir) / "manifest.json"
+    feat_order = list(getattr(env, "feat_cols", []))
+
+    def _convert(obj):  # recursively ensure JSON-serializable primitives
+        import numpy as _np
+        if isinstance(obj, (int, float, str, bool)) or obj is None:
+            return obj
+        if isinstance(obj, (list, tuple)):
+            return [_convert(x) for x in obj]
+        if isinstance(obj, dict):
+            return {k: _convert(v) for k, v in obj.items()}
+        if isinstance(obj, (_np.integer,)):
+            return int(obj)
+        if isinstance(obj, (_np.floating,)):
+            return float(obj)
+        if isinstance(obj, _np.ndarray):
+            return obj.tolist()
+        # dataclass or other object with __dict__
+        if hasattr(obj, "__dict__"):
+            return _convert(vars(obj))
+        return str(obj)
+
+    payload = {
+        "price_bins": int(env.action_space.nvec[0]),
+        "qty_bins": int(env.action_space.nvec[1]),
+        "lookback": int(env.lookback),
+        "features": feat_order,
+        "env_cfg": _convert(getattr(env, "env_cfg", None)),
+        "train_cfg": _convert(asdict(tcfg)),
+    }
+    # Add quick integrity hashes
+    h_src = json.dumps(payload, sort_keys=True).encode()
+    payload["sha256"] = hashlib.sha256(h_src).hexdigest()
+    try:
+        with open(path, "w") as f:
+            json.dump(payload, f, indent=2)
+    except Exception:
+        pass
+
+
+def _save_ckpt(ckpt_dir: str, step: int, model: nn.Module, opt: optim.Optimizer, tcfg: TrainConfig, env: DeepScalperEnv | None = None):
     if not ckpt_dir:
         return
     d_last, _ = _ckpt_paths(ckpt_dir)
@@ -76,6 +127,9 @@ def _save_ckpt(ckpt_dir: str, step: int, model: nn.Module, opt: optim.Optimizer,
         torch.save(payload, d_last)
     except Exception:
         pass
+    # Write manifest once (or overwrite) if env provided
+    if env is not None:
+        _write_manifest(str(d_last.parent), env, tcfg)
 
 
 def train_agent(env: DeepScalperEnv, tcfg: TrainConfig, ckpt_dir: str = "", *, resume: bool = True, save_every: int = 2000):
@@ -178,13 +232,13 @@ def train_agent(env: DeepScalperEnv, tcfg: TrainConfig, ckpt_dir: str = "", *, r
         if step % 10_000 == 0 and step > 0:
             eval_ret = evaluate(env, online, device, episodes=3)
             print(f"Eval@{step}: avg_return={eval_ret:,.2f}")
-            _save_ckpt(ckpt_dir, step, online, opt, tcfg)
+            _save_ckpt(ckpt_dir, step, online, opt, tcfg, env)
 
         if save_every and step % save_every == 0 and step > 0:
-            _save_ckpt(ckpt_dir, step, online, opt, tcfg)
+            _save_ckpt(ckpt_dir, step, online, opt, tcfg, env)
 
     # Final save
-    _save_ckpt(ckpt_dir, step, online, opt, tcfg)
+    _save_ckpt(ckpt_dir, step, online, opt, tcfg, env)
 
 
 @torch.no_grad()

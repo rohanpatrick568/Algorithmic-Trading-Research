@@ -77,11 +77,78 @@ python scripts/rl/gym_implementation.py --symbol AAPL --start 2015-01-01 --end 2
 
 ## Reinforcement Learning
 
-- Environment and training loop scaffolding modeled after DeepScalper’s intraday framing:
-  - Env: [`gym_implementation.TradingEnvGym`](scripts/rl/gym_implementation.py)
-  - CLI params: --window, --episodes, --max-steps, --gamma, --lr, --batch, --replay, --warmup, --target-sync, --epsilon-decay-steps.
-  - Checkpoints: [models/bdq_test.pt](models/bdq_test.pt), [models/test_bdq.pt](models/test_bdq.pt)
-- See DeepScalper methodology and metrics in [TXTs/DeepScalper.txt](TXTs/DeepScalper.txt).
+### DeepScalper-Style Intraday Agent (Branching Dueling Q)
+
+Implemented under `scripts/deepscalper/` with:
+* Environment: [`env.DeepScalperEnv`](scripts/deepscalper/env.py) (minute bars, per‑day episodes, volatility aux target, hindsight reward bonus)
+* Model: [`model.BranchingDuelingQNet`](scripts/deepscalper/model.py) (shared trunk + price and quantity branches + aux volatility head)
+* Training loop: [`train.train_agent`](scripts/deepscalper/train.py)
+* CLI Entrypoint: [`main.py`](scripts/deepscalper/main.py)
+* Lumibot integration / backtest: [`run_lumibot_example.py`](scripts/deepscalper/run_lumibot_example.py)
+
+#### 1. Train a Model
+Downloads recent 1m data for the symbol (default AAPL) via `yfinance` and starts/continues training (resumes if `last.pt` present):
+```sh
+python -m scripts.deepscalper.main --symbol AAPL --steps 50000
+```
+Optional flags:
+* `--start 2025-01-01 --end 2025-01-15` limit data range
+* `--no-resume` start fresh even if checkpoints exist
+* `--ckpt path/to/ckpts` custom checkpoint directory
+* `--save-every 5000` adjust checkpoint save frequency
+
+Checkpoint directory contents after/while training:
+```
+checkpoints/
+  bdq_5000.pt          # Rolling historical snapshots (step number)
+  bdq_10000.pt
+  last.pt              # Always the most recent checkpoint
+  manifest.json        # Inference-critical metadata
+  baseline_metrics.json (optional; produced by baseline_report)
+```
+
+`manifest.json` includes: `price_bins`, `qty_bins`, `lookback`, feature ordering, the environment & train configs, and a SHA256 hash for integrity.
+
+#### 2. Generate a Baseline Report
+Runs a quick greedy-policy evaluation over a few random episodes and stores summary stats:
+```sh
+python -m scripts.deepscalper.baseline_report --ckpt_dir scripts/deepscalper/checkpoints --episodes 5
+```
+Output: `baseline_metrics.json` (avg_return, stdev, min/max, wall time, raw episode returns).
+
+#### 3. Run a Lumibot Backtest with the Learned Policy
+Uses Yahoo minute data (auto picks latest checkpoint; respects `manifest.json` if present):
+```sh
+python -m scripts.deepscalper.run_lumibot_example
+```
+Environment variable overrides:
+```sh
+export DS_CKPT_DIR=/absolute/path/to/another/checkpoint_dir
+python -m scripts.deepscalper.run_lumibot_example
+```
+
+#### 4. Inference Mechanics
+* Discrete action = (price_bin, qty_bin)
+* `price_bin` maps to a relative price offset in [-1, +1] scaled by a multiple of recent ATR-derived tick size.
+* `qty_bin` splits into side (>= midpoint ⇒ long, else short) and size fraction (distance from midpoint).
+* Environment simulates limit-like fill if price trades inside the bar's high/low; otherwise applies a small slippage penalty.
+* Auxiliary head predicts short-horizon realized volatility; its target is computed from recent log-return variance.
+
+#### 5. Resume Training
+Simply rerun the training command; it detects `last.pt` and continues from stored step:
+```sh
+python -m scripts.deepscalper.main --symbol AAPL --steps 200000
+```
+(If you previously ran 50k steps and now ask for 200k, it will aim for cumulative 200k.)
+
+#### 6. Consistency / Manifest Checks
+* During each checkpoint save the manifest is (re)written.
+* Downstream consumers (Lumibot script) load bins/lookback from the manifest to avoid mismatches.
+
+#### 7. Upcoming Enhancements (Roadmap Snippet)
+Planned increments: prioritized replay tuning, distributional heads, regime-aware evaluation, multi-symbol data cache, and drift detection.
+
+See full DeepScalper research summary in [TXTs/DeepScalper.txt](TXTs/DeepScalper.txt).
 
 ## Data
 
