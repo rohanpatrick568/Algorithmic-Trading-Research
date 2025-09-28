@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from lumibot.backtesting import YahooDataBacktesting
 from lumibot.entities import Asset
@@ -21,8 +21,20 @@ except Exception:
 def main():
     symbol = "AAPL"
     asset = Asset(symbol, asset_type="stock")
-    # Keep within Yahoo 1m API limit (<= 8 days per request)
-    end = datetime.now()
+    # Keep within Yahoo 1m API limit (<= 8 days per request) and ensure end < 'now' in exchange tz
+    # Lumibot rejects a backtesting_end in the future; we clip to the previous completed minute.
+    try:
+        from zoneinfo import ZoneInfo  # Python 3.9+
+        ny_tz = ZoneInfo("America/New_York")
+        now_ny = datetime.now(tz=ny_tz)
+    except Exception:
+        ny_tz = timezone.utc
+        now_ny = datetime.now(tz=ny_tz)
+
+    # Subtract a small safety buffer (2 minutes) and truncate to minute
+    safe_end = now_ny - timedelta(minutes=2)
+    safe_end = safe_end.replace(second=0, microsecond=0)
+    end = safe_end
     start = end - timedelta(days=5)
     # Pick latest checkpoint if available (portable repo-relative path)
     import os, glob, pathlib, json

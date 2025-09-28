@@ -9,3 +9,5 @@ venv/
 *.pt
 *.pth
 *.pyc
+*config.py
+*.env

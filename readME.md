@@ -31,6 +31,25 @@ Key references in TXTs:
 Files:
 - Env bootstrap: [setup_env.sh](setup_env.sh)
 - Requirements: [requirements.txt](requirements.txt)
+- Live trading config helpers: [scripts/live/config.py](scripts/live/config.py)
+
+### Live Paper Trading (Alpaca - FlawlessVictoryRiskAware)
+
+Run the risk-aware Flawless Victory strategy against Alpaca paper trading:
+```sh
+export ALPACA_API_KEY=your_key
+export ALPACA_API_SECRET=your_secret
+# (Optional) export ALPACA_BASE_URL=https://paper-api.alpaca.markets
+python -m scripts.live.live_paper_trading --symbol AAPL --version v1 --verbose-risk
+```
+Flags:
+* `--version v1|v2|v3` select strategy logic
+* `--cash-fraction 0.8` capital allocation per trade
+* `--target-daily-vol 0.015` realized vol target for scaling
+* `--max-drawdown 0.15` drawdown threshold gating new entries
+* `--dd-cooldown 3` cooldown bars after breach
+
+Security: Never commit raw API keys. Use environment variables or a local `.env` (Lumibot auto-loads). The repository deliberately does NOT store credentials.
 
 ## Quick Start
 
