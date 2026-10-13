@@ -8,7 +8,7 @@ Backtesting strategies (Backtrader), risk-aware controls (DeepScalper-inspired),
   - Risk-aware variant with volatility-based sizing, drawdown brake, downside deviation gate: [`fv_risk_aware.FlawlessVictory`](scripts/backtrader/fv_risk_aware.py)
   - Smoke test using synthetic OHLCV: [scripts/backtrader/test.py](scripts/backtrader/test.py)
 - Reinforcement Learning (DeepScalper-style)
-  - Gymnasium environment and BDQ-style scaffolding: [`gym_implementation.TradingEnvGym`](scripts/rl/gym_implementation.py)
+  - Gymnasium environment and BDQ-style scaffolding: [`gym_implementation.TradingEnvGym`](scripts/backtrader/rl/gym_implementation.py)
   - Pretrained checkpoints: [models/bdq_test.pt](models/bdq_test.pt), [models/test_bdq.pt](models/test_bdq.pt)
 - LLM Sentiment (FinLlama-inspired)
   - Research notes and portfolio construction details: [TXTs/LLMSentiment.txt](TXTs/LLMSentiment.txt)
@@ -31,7 +31,7 @@ Key references in TXTs:
 Files:
 - Env bootstrap: [setup_env.sh](setup_env.sh)
 - Requirements: [requirements.txt](requirements.txt)
-- Live trading config helpers: [scripts/live/config.py](scripts/live/config.py)
+- Live paper trading entry point: [scripts/live/live_paper_trading.py](scripts/live/live_paper_trading.py) (a local `config.py` is git-ignored, so keys stay out of the repo)
 
 ### Live Paper Trading (Alpaca - FlawlessVictoryRiskAware)
 
@@ -77,7 +77,7 @@ python scripts/backtrader/fv_risk_aware.py --symbol AAPL --version v2
 
 RL baseline (Gymnasium BDQ-style):
 ```sh
-python scripts/rl/gym_implementation.py --symbol AAPL --start 2015-01-01 --end 2022-12-31 --episodes 1
+python scripts/backtrader/rl/gym_implementation.py --symbol AAPL --start 2015-01-01 --end 2022-12-31 --episodes 1
 ```
 
 ## Strategy Details
@@ -180,9 +180,13 @@ See full DeepScalper research summary in [TXTs/DeepScalper.txt](TXTs/DeepScalper
   - [scripts/backtrader/flawless_victory.py](scripts/backtrader/flawless_victory.py)
   - [scripts/backtrader/fv_risk_aware.py](scripts/backtrader/fv_risk_aware.py)
   - [scripts/backtrader/test.py](scripts/backtrader/test.py)
-- [scripts/rl](scripts/rl): Gymnasium RL baseline and tools
-  - [scripts/rl/gym_implementation.py](scripts/rl/gym_implementation.py)
-- [scripts/llm](scripts/llm): LLM sentiment utilities (see research in TXTs)
+- [scripts/backtrader/rl](scripts/backtrader/rl): Gymnasium RL baseline and tools
+  - [scripts/backtrader/rl/gym_implementation.py](scripts/backtrader/rl/gym_implementation.py)
+- [scripts/backtrader/llm](scripts/backtrader/llm): LLM sentiment utilities (see research in TXTs)
+- [scripts/backtrader/final](scripts/backtrader/final): Combined strategy
+- [scripts/deepscalper](scripts/deepscalper): DeepScalper-style BDQ agent (train, evaluate, Lumibot backtest)
+- [scripts/lumibot](scripts/lumibot): Lumibot ports and tests of the risk-aware strategy
+- [scripts/live](scripts/live): Alpaca paper-trading entry point
 - [TXTs](TXTs): Papers and Pine sources
   - [TXTs/DeepScalper.txt](TXTs/DeepScalper.txt)
   - [TXTs/LLMSentiment.txt](TXTs/LLMSentiment.txt)
@@ -195,4 +199,4 @@ See full DeepScalper research summary in [TXTs/DeepScalper.txt](TXTs/DeepScalper
   - Ensure columns are flattened and named Open/High/Low/Close/Volume/OpenInterest (see `_ensure_bt_ohlcv` in [scripts/backtrader/test.py](scripts/backtrader/test.py)).
 
 ## Disclaimer
-This repository is for research only. Nothing herein is financial advice. Use at your
+This repository is for research only. Nothing herein is financial advice. Use at your own risk.
