@@ -11,3 +11,10 @@ venv/
 *.pyc
 *config.py
 *.env
+
+# Python bytecode
+__pycache__/
+
+# Editor workspace files
+*.code-workspace
+.vscode/
